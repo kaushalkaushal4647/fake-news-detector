@@ -1,0 +1,1514 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="description" content="Browser-only headline checker using local heuristics — no uploads, no API." />
+  <title>Fake.News Detector</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-deep: #020408;
+      --bg-mid: #0a0f1a;
+      --accent: #2ef4c3;
+      --accent-2: #00c9a7;
+      --accent-dim: rgba(46, 244, 195, 0.12);
+      --accent-glow: rgba(46, 244, 195, 0.55);
+      --violet: #a78bfa;
+      --violet-dim: rgba(167, 139, 250, 0.15);
+      --danger: #ff5c6c;
+      --danger-dim: rgba(255, 92, 108, 0.12);
+      --warn: #ffc93d;
+      --text: #e8eef8;
+      --text-muted: #8b9eb4;
+      --text-dim: #4d6278;
+      --glass: rgba(255, 255, 255, 0.045);
+      --glass-border: rgba(255, 255, 255, 0.09);
+      --radius: 18px;
+      --radius-sm: 12px;
+      --font-sans: "DM Sans", system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, monospace;
+      --font-display: "Outfit", "DM Sans", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg-deep);
+      background-image:
+        radial-gradient(ellipse 100% 70% at 50% -15%, rgba(46, 244, 195, 0.14), transparent 55%),
+        radial-gradient(ellipse 55% 45% at 95% 25%, rgba(167, 139, 250, 0.11), transparent),
+        radial-gradient(ellipse 45% 35% at 5% 75%, rgba(46, 244, 195, 0.07), transparent),
+        radial-gradient(ellipse 80% 50% at 50% 100%, rgba(0, 120, 140, 0.12), transparent);
+      font-family: var(--font-sans);
+      color: var(--text);
+      position: relative;
+      overflow-x: hidden;
+      line-height: 1.5;
+    }
+    ::selection {
+      background: rgba(46, 244, 195, 0.28);
+      color: #fff;
+    }
+    .bg-grid {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      background-image:
+        linear-gradient(rgba(46, 244, 195, 0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(46, 244, 195, 0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, black 20%, transparent 75%);
+      pointer-events: none;
+    }
+    .bg-noise {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      opacity: 0.035;
+      pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+    }
+    .blobs {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      overflow: hidden;
+    }
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.55;
+      animation: blob-float 22s ease-in-out infinite;
+    }
+    .blob-a {
+      width: min(520px, 90vw);
+      height: min(520px, 90vw);
+      background: radial-gradient(circle, rgba(46, 244, 195, 0.35) 0%, transparent 70%);
+      top: -12%;
+      left: -8%;
+      animation-delay: 0s;
+    }
+    .blob-b {
+      width: min(420px, 75vw);
+      height: min(420px, 75vw);
+      background: radial-gradient(circle, rgba(167, 139, 250, 0.28) 0%, transparent 70%);
+      top: 35%;
+      right: -15%;
+      animation-delay: -7s;
+      animation-duration: 26s;
+    }
+    .blob-c {
+      width: min(480px, 85vw);
+      height: min(480px, 85vw);
+      background: radial-gradient(circle, rgba(0, 180, 200, 0.2) 0%, transparent 65%);
+      bottom: -18%;
+      left: 20%;
+      animation-delay: -12s;
+      animation-duration: 24s;
+    }
+    @keyframes blob-float {
+      0%, 100% { transform: translate(0, 0) scale(1); }
+      33% { transform: translate(3%, 4%) scale(1.05); }
+      66% { transform: translate(-2%, 2%) scale(0.96); }
+    }
+    .wrap {
+      position: relative;
+      z-index: 1;
+      max-width: 940px;
+      margin: 0 auto;
+      padding: 36px 22px 80px;
+    }
+    header {
+      text-align: center;
+      margin-bottom: 40px;
+    }
+    .tagline-wrap {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 20px;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: linear-gradient(135deg, rgba(46, 244, 195, 0.14), rgba(46, 244, 195, 0.04));
+      border: 1px solid rgba(46, 244, 195, 0.38);
+      border-radius: 999px;
+      font-family: var(--font-mono);
+      backdrop-filter: blur(10px);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+      transition: transform 0.25s ease, border-color 0.25s, box-shadow 0.25s;
+    }
+    .pill:hover {
+      transform: translateY(-2px);
+      border-color: rgba(46, 244, 195, 0.55);
+      box-shadow: 0 8px 32px rgba(46, 244, 195, 0.15), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+    .pill.muted {
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.04);
+      border-color: var(--glass-border);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    .pill.muted:hover {
+      border-color: rgba(255, 255, 255, 0.18);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+    }
+    h1 {
+      font-family: var(--font-display);
+      font-size: clamp(2.5rem, 8vw, 4rem);
+      font-weight: 800;
+      letter-spacing: -0.04em;
+      margin: 0 0 16px;
+      line-height: 1;
+      filter: drop-shadow(0 20px 50px rgba(46, 244, 195, 0.18));
+    }
+    .h1-line {
+      display: block;
+      background: linear-gradient(105deg, #ffffff 0%, #c8fff4 35%, var(--accent) 55%, var(--accent-2) 100%);
+      background-size: 200% auto;
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: title-shine 8s ease-in-out infinite;
+    }
+    @keyframes title-shine {
+      0%, 100% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+    }
+    h1 .dot {
+      -webkit-text-fill-color: var(--accent);
+      text-shadow: 0 0 40px var(--accent-glow);
+    }
+    h1 .sub {
+      display: block;
+      font-family: var(--font-mono);
+      font-size: clamp(0.65rem, 2vw, 0.75rem);
+      font-weight: 600;
+      letter-spacing: 0.42em;
+      color: var(--accent);
+      margin-top: 14px;
+      opacity: 0.95;
+    }
+    .hint {
+      color: var(--text-muted);
+      font-size: 15px;
+      max-width: 520px;
+      margin: 0 auto;
+      font-weight: 400;
+    }
+    .hero-stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin: 36px 0 28px;
+    }
+    @media (max-width: 600px) {
+      .hero-stats { grid-template-columns: 1fr; }
+    }
+    .stat-card {
+      position: relative;
+      background: linear-gradient(165deg, rgba(255, 255, 255, 0.06) 0%, rgba(255, 255, 255, 0.02) 100%);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      padding: 18px 20px;
+      text-align: left;
+      transition: border-color 0.3s, transform 0.3s, box-shadow 0.3s;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    .stat-card::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      padding: 1px;
+      background: linear-gradient(135deg, rgba(46, 244, 195, 0.35), rgba(167, 139, 250, 0.2), transparent 60%);
+      -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+      -webkit-mask-composite: xor;
+      mask-composite: exclude;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      pointer-events: none;
+    }
+    .stat-card:hover {
+      border-color: rgba(46, 244, 195, 0.28);
+      transform: translateY(-4px);
+      box-shadow: 0 20px 50px rgba(0, 0, 0, 0.35), 0 0 40px rgba(46, 244, 195, 0.08);
+    }
+    .stat-card:hover::before { opacity: 1; }
+    .stat-card .k {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .stat-card .v {
+      font-size: 1.35rem;
+      font-weight: 700;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-card .d {
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 32px;
+    }
+    @media (max-width: 720px) {
+      .info-grid { grid-template-columns: 1fr; }
+    }
+    .info-card {
+      background: linear-gradient(165deg, rgba(255,255,255,0.07) 0%, rgba(255,255,255,0.025) 100%);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      padding: 20px 20px 18px;
+      transition: transform 0.3s ease, border-color 0.3s, box-shadow 0.3s;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+    }
+    .info-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(167, 139, 250, 0.25);
+      box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+    }
+    .info-card h3 {
+      margin: 0 0 8px;
+      font-size: 14px;
+      font-weight: 700;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .info-card p {
+      margin: 0;
+      font-size: 13px;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+    .panel {
+      background: linear-gradient(165deg, rgba(18, 26, 42, 0.82) 0%, rgba(8, 12, 22, 0.88) 100%);
+      backdrop-filter: blur(20px) saturate(1.2);
+      -webkit-backdrop-filter: blur(20px) saturate(1.2);
+      border: 1px solid rgba(46, 244, 195, 0.22);
+      border-radius: var(--radius);
+      margin-bottom: 28px;
+      position: relative;
+      overflow: hidden;
+      box-shadow:
+        0 28px 60px rgba(0, 0, 0, 0.45),
+        0 0 0 1px rgba(255, 255, 255, 0.04) inset,
+        0 1px 0 rgba(46, 244, 195, 0.12) inset;
+    }
+    .panel::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(46, 244, 195, 0.45), rgba(167, 139, 250, 0.35), transparent);
+      opacity: 0.85;
+      pointer-events: none;
+    }
+    .scan-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      height: 3px;
+      width: 0%;
+      background: linear-gradient(90deg, var(--accent), #5efce8, var(--accent));
+      background-size: 200% 100%;
+      animation: shimmer 1.2s linear infinite;
+      transition: width 0.15s ease;
+      z-index: 10;
+      box-shadow: 0 0 20px var(--accent-glow);
+      opacity: 0;
+    }
+    .scan-bar.active { opacity: 1; }
+    @keyframes shimmer {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 200% 50%; }
+    }
+    .panel-head {
+      padding: 14px 20px 10px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .panel-head .live {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 10px var(--accent);
+      animation: pulse-dot 1.5s ease infinite;
+    }
+    .panel-head .live.off {
+      background: var(--text-dim);
+      box-shadow: none;
+      animation: none;
+    }
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.45; }
+    }
+    #headline {
+      width: 100%;
+      min-height: 132px;
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text);
+      font-size: 16px;
+      line-height: 1.65;
+      padding: 20px 22px;
+      resize: vertical;
+      font-family: var(--font-sans);
+      caret-color: var(--accent);
+    }
+    #headline::placeholder { color: var(--text-dim); }
+    #headline:focus {
+      outline: none;
+      box-shadow: inset 0 0 0 1px rgba(46, 244, 195, 0.25);
+      background: rgba(46, 244, 195, 0.02);
+      border-radius: 8px;
+    }
+    #headline:disabled { opacity: 0.65; }
+    .panel-foot kbd {
+      display: inline-block;
+      padding: 2px 7px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 6px;
+      box-shadow: 0 2px 0 rgba(0, 0, 0, 0.2);
+    }
+    .panel-foot {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 14px 20px 16px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .panel-foot .meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-dim);
+      letter-spacing: 0.04em;
+    }
+    #btnAnalyze {
+      background: linear-gradient(135deg, #3ef8d0 0%, var(--accent-2) 45%, #009688 100%);
+      background-size: 200% auto;
+      border: 1px solid rgba(255, 255, 255, 0.22);
+      color: #03120e;
+      font-family: var(--font-mono);
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.14em;
+      padding: 14px 28px;
+      cursor: pointer;
+      border-radius: 999px;
+      text-transform: uppercase;
+      transition: transform 0.2s, box-shadow 0.25s, filter 0.2s, background-position 0.5s ease;
+      box-shadow:
+        0 6px 28px rgba(46, 244, 195, 0.35),
+        inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    }
+    #btnAnalyze:hover:not(:disabled) {
+      filter: brightness(1.05);
+      transform: translateY(-2px) scale(1.02);
+      background-position: 100% 50%;
+      box-shadow:
+        0 12px 40px rgba(46, 244, 195, 0.45),
+        inset 0 1px 0 rgba(255, 255, 255, 0.45);
+    }
+    #btnAnalyze:active:not(:disabled) { transform: translateY(0); }
+    #btnAnalyze:disabled {
+      background: rgba(46, 244, 195, 0.1);
+      border: 1px solid rgba(46, 244, 195, 0.25);
+      color: var(--accent);
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    #btnAnalyze.dim:not(:disabled) {
+      opacity: 0.45;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+    .section-head {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }
+    .section-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.2em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .section-hint {
+      font-size: 12px;
+      color: var(--text-muted);
+    }
+    .demos {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .demo-btn {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      border-left: 3px solid transparent;
+      color: var(--text-muted);
+      font-size: 12px;
+      padding: 10px 14px;
+      cursor: pointer;
+      border-radius: var(--radius-sm);
+      font-family: var(--font-sans);
+      max-width: 100%;
+      text-align: left;
+      line-height: 1.45;
+      transition: border-color 0.2s, color 0.2s, background 0.2s, transform 0.2s, box-shadow 0.2s;
+    }
+    @media (min-width: 640px) {
+      .demo-btn { max-width: calc(50% - 6px); }
+    }
+    .demo-btn:hover:not(:disabled) {
+      border-color: rgba(46, 244, 195, 0.35);
+      border-left-color: var(--accent);
+      color: var(--text);
+      background: linear-gradient(90deg, rgba(46, 244, 195, 0.1), rgba(255, 255, 255, 0.03));
+      transform: translateX(2px);
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.2);
+    }
+    .demo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #errorBox {
+      display: none;
+      background: var(--danger-dim);
+      border: 1px solid rgba(255, 71, 87, 0.35);
+      padding: 16px 20px;
+      border-radius: var(--radius-sm);
+      margin-bottom: 22px;
+      color: #ff8a94;
+      font-size: 14px;
+      border-left: 4px solid var(--danger);
+    }
+    #errorBox.show { display: block; }
+    #resultCard {
+      display: none;
+      animation: fadeSlideIn 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 28px;
+      box-shadow: 0 28px 56px rgba(0, 0, 0, 0.4);
+    }
+    #resultCard.show { display: block; }
+    #resultCard.real {
+      border: 1px solid rgba(46, 244, 195, 0.45);
+      background: linear-gradient(180deg, rgba(46, 244, 195, 0.1) 0%, rgba(3, 6, 13, 0.94) 130px);
+      box-shadow: 0 28px 56px rgba(0, 0, 0, 0.4), 0 0 80px rgba(46, 244, 195, 0.06);
+    }
+    #resultCard.fake {
+      border: 1px solid rgba(255, 92, 108, 0.45);
+      background: linear-gradient(180deg, rgba(255, 92, 108, 0.1) 0%, rgba(3, 6, 13, 0.94) 130px);
+      box-shadow: 0 28px 56px rgba(0, 0, 0, 0.4), 0 0 80px rgba(255, 92, 108, 0.06);
+    }
+    .verdict-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 18px;
+      padding: 22px 24px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    #resultCard.real .verdict-row {
+      border-bottom-color: rgba(46, 244, 195, 0.18);
+    }
+    #resultCard.fake .verdict-row {
+      border-bottom-color: rgba(255, 71, 87, 0.15);
+    }
+    .verdict-left { display: flex; align-items: center; gap: 16px; }
+    .emoji-big { font-size: 2.5rem; line-height: 1; }
+    #resultCard.real .emoji-big { filter: drop-shadow(0 0 18px rgba(46, 244, 195, 0.75)); }
+    #resultCard.fake .emoji-big { filter: drop-shadow(0 0 14px rgba(255, 71, 87, 0.6)); }
+    .verdict-label {
+      font-size: clamp(1.6rem, 5vw, 2rem);
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      font-family: var(--font-mono);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .verdict-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-muted);
+      letter-spacing: 0.06em;
+      margin-top: 6px;
+    }
+    .verdict-right { text-align: right; }
+    .risk-pill {
+      display: inline-block;
+      padding: 6px 16px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: 0.14em;
+      border-radius: 999px;
+      border: 1px solid;
+    }
+    .result-time {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 10px;
+      font-family: var(--font-mono);
+    }
+    .detail-strip {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1px;
+      background: rgba(255, 255, 255, 0.06);
+      margin: 0;
+      padding: 0;
+    }
+    @media (max-width: 640px) {
+      .detail-strip { grid-template-columns: repeat(2, 1fr); }
+    }
+    .detail-cell {
+      background: rgba(3, 6, 13, 0.85);
+      padding: 14px 16px;
+    }
+    .detail-cell .dk {
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 4px;
+    }
+    .detail-cell .dv {
+      font-size: 15px;
+      font-weight: 700;
+      color: #fff;
+      font-variant-numeric: tabular-nums;
+    }
+    .detail-cell .ds {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+    .score-block {
+      padding: 18px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .score-block h4 {
+      margin: 0 0 12px;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .score-rows { display: flex; flex-direction: column; gap: 10px; }
+    .score-row { display: flex; align-items: center; gap: 12px; }
+    .score-row .lbl {
+      width: 72px;
+      flex-shrink: 0;
+      font-size: 12px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+    }
+    #resultCard.real .score-row.fake .lbl { color: var(--text-muted); }
+    #resultCard.fake .score-row.real .lbl { color: var(--text-muted); }
+    .score-row.fake .lbl { color: #ff8a94; }
+    .score-row.real .lbl { color: var(--accent); }
+    .score-track {
+      flex: 1;
+      height: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .score-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 0.8s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    .score-fill.fake { background: linear-gradient(90deg, #ff6b7a, var(--danger)); }
+    .score-fill.real { background: linear-gradient(90deg, #5efce8, var(--accent)); }
+    .score-val {
+      width: 28px;
+      text-align: right;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .meter-block {
+      padding: 18px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .meter-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .meter-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    #meterPct {
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-mono);
+    }
+    .meter-track {
+      height: 10px;
+      background: rgba(255, 255, 255, 0.07);
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .meter-fill {
+      height: 100%;
+      border-radius: 99px;
+      transition: width 1s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .meter-scale {
+      display: flex;
+      justify-content: space-between;
+      margin-top: 8px;
+      font-family: var(--font-mono);
+      font-size: 9px;
+      letter-spacing: 0.08em;
+      color: var(--text-dim);
+    }
+    .risk-explainer {
+      padding: 0 24px 18px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .risk-explainer p {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--text-muted);
+    }
+    .block-pad {
+      padding: 20px 24px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    }
+    .block-pad:last-of-type { border-bottom: none; }
+    .small-cap {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 10px;
+    }
+    .reasoning { margin: 0; font-size: 15px; line-height: 1.65; color: var(--text-muted); }
+    .signal-list { display: flex; flex-direction: column; gap: 10px; }
+    .signal-row {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      transition: border-color 0.2s;
+    }
+    .signal-row:hover { border-color: rgba(255, 255, 255, 0.12); }
+    .signal-idx {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      min-width: 22px;
+      margin-top: 2px;
+    }
+    #resultCard.real .signal-idx { color: var(--accent); }
+    #resultCard.fake .signal-idx { color: #ff8a94; }
+    .signal-txt { font-size: 14px; color: var(--text); line-height: 1.5; }
+    .analyzed-wrap {
+      padding: 16px 24px 22px;
+      border-top: 1px solid rgba(255, 255, 255, 0.06);
+      background: rgba(0, 0, 0, 0.2);
+    }
+    .analyzed-text {
+      font-size: 13px;
+      color: var(--text-muted);
+      font-style: italic;
+      line-height: 1.65;
+    }
+    .disclaimer {
+      position: relative;
+      background: linear-gradient(135deg, rgba(255, 201, 61, 0.1) 0%, rgba(255, 140, 90, 0.06) 100%);
+      border: 1px solid rgba(255, 201, 61, 0.28);
+      border-radius: var(--radius-sm);
+      padding: 18px 22px;
+      margin-bottom: 28px;
+      font-size: 13px;
+      color: #f0d4a8;
+      line-height: 1.55;
+      box-shadow: 0 12px 40px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    .disclaimer strong { color: #ffe6a8; }
+    #historySection { display: none; margin-top: 36px; }
+    #historySection.show { display: block; }
+    .hist-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 16px;
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--glass-border);
+      border-radius: var(--radius-sm);
+      cursor: pointer;
+      transition: all 0.2s;
+      margin-bottom: 10px;
+    }
+    .hist-row:hover {
+      border-color: rgba(46, 244, 195, 0.35);
+      background: linear-gradient(90deg, rgba(46, 244, 195, 0.08), rgba(255, 255, 255, 0.02));
+      transform: translateX(3px);
+    }
+    .hist-label {
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      min-width: 40px;
+      font-family: var(--font-mono);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .hist-pct {
+      font-size: 11px;
+      color: var(--text-dim);
+      min-width: 40px;
+      font-family: var(--font-mono);
+    }
+    .hist-snippet {
+      font-size: 13px;
+      color: var(--text-muted);
+      flex: 1;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .hist-time {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      flex-shrink: 0;
+    }
+    footer.foot {
+      position: relative;
+      text-align: center;
+      margin-top: 52px;
+      padding-top: 36px;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    footer.foot::before {
+      content: "";
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(400px, 80%);
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(46, 244, 195, 0.45), rgba(167, 139, 250, 0.4), transparent);
+    }
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateY(20px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .blob,
+      .h1-line,
+      .scan-bar {
+        animation: none !important;
+      }
+      .blob { opacity: 0.35; }
+    }
+  </style>
+</head>
+<body>
+  <div class="blobs" aria-hidden="true">
+    <div class="blob blob-a"></div>
+    <div class="blob blob-b"></div>
+    <div class="blob blob-c"></div>
+  </div>
+  <div class="bg-grid" aria-hidden="true"></div>
+  <div class="bg-noise" aria-hidden="true"></div>
+
+  <div class="wrap">
+    <header>
+      <div class="tagline-wrap">
+        <span class="pill">⚡ Instant</span>
+        <span class="pill">🔒 Private</span>
+        <span class="pill muted">💻 100% offline-capable</span>
+      </div>
+      <h1>
+        <span class="h1-line">FAKE<span class="dot">.</span>NEWS</span>
+        <span class="sub">DETECTOR</span>
+      </h1>
+      <p class="hint">
+        Paste a headline or short article snippet. You get a <strong>heuristic</strong> verdict, confidence estimate, and explainable signals — all computed in your browser.
+      </p>
+    </header>
+
+    <div class="hero-stats">
+      <div class="stat-card">
+        <div class="k">This session</div>
+        <div class="v" id="statScans">0</div>
+        <div class="d">Headlines analyzed since you opened this page</div>
+      </div>
+      <div class="stat-card">
+        <div class="k">Engine</div>
+        <div class="v">v1</div>
+        <div class="d">Rule-based scorer · not a trained ML model</div>
+      </div>
+      <div class="stat-card">
+        <div class="k">Data leaves device?</div>
+        <div class="v">Never</div>
+        <div class="d">No network calls — your text stays on this tab</div>
+      </div>
+    </div>
+
+    <div class="info-grid">
+      <div class="info-card">
+        <h3>📊 What we check</h3>
+        <p>Capitalization patterns, sensational punctuation, harmful-health and conspiracy-style word pairs, clickbait phrases, and whether the language names real institutions or measured policy topics.</p>
+      </div>
+      <div class="info-card">
+        <h3>🎯 What you get</h3>
+        <p>A <strong>REAL</strong> or <strong>FAKE</strong> label (based on score balance), a numeric confidence band, a misinformation <strong>risk</strong> tier, and a short list of concrete signals you can read and disagree with.</p>
+      </div>
+      <div class="info-card">
+        <h3>⚠️ Limits</h3>
+        <p>Short text only. Satire, opinion, and nuanced reporting can trip heuristics. Always corroborate with trusted outlets, primary sources, or professional fact-checkers for anything that affects health, money, or safety.</p>
+      </div>
+    </div>
+
+    <div class="disclaimer">
+      <strong>Educational tool.</strong> This page does not access live news databases or claim legal or journalistic authority. Treat output as a starting point for critical thinking, not a final judgment.
+    </div>
+
+    <div class="panel">
+      <div id="scanBar" class="scan-bar" aria-hidden="true"></div>
+      <div class="panel-head">
+        <span>Input · headline &amp; snippet analyzer</span>
+        <span id="engineLive" class="live" title="Ready"></span>
+      </div>
+      <textarea id="headline" placeholder="Example: “Breaking: Scientists HATE This One Weird Trick…” or paste a real headline you want to test." rows="5"></textarea>
+      <div class="panel-foot">
+        <span class="meta"><span id="charCount">0</span> chars · <span id="wordCountFoot">0</span> words · <kbd>Ctrl</kbd>+<kbd>Enter</kbd> analyze</span>
+        <button type="button" id="btnAnalyze" class="dim">Analyze</button>
+      </div>
+    </div>
+
+    <div class="section-head">
+      <span class="section-label">Curated demo headlines</span>
+      <span class="section-hint">Tap to load &amp; run instantly</span>
+    </div>
+    <div class="demos" id="demoWrap"></div>
+
+    <div id="errorBox" role="alert"></div>
+
+    <div id="resultCard">
+      <div class="verdict-row">
+        <div class="verdict-left">
+          <span class="emoji-big" id="resultEmoji"></span>
+          <div>
+            <div class="verdict-label" id="resultLabel"></div>
+            <div class="verdict-meta" id="resultMeta"></div>
+            <div class="result-time" id="resultTime"></div>
+          </div>
+        </div>
+        <div class="verdict-right">
+          <span class="risk-pill" id="riskPill">RISK · </span>
+          <div class="result-time" id="confidenceBand" style="margin-top:8px"></div>
+        </div>
+      </div>
+
+      <div class="detail-strip">
+        <div class="detail-cell">
+          <div class="dk">Words</div>
+          <div class="dv" id="dWords">—</div>
+          <div class="ds">Whitespace split</div>
+        </div>
+        <div class="detail-cell">
+          <div class="dk">Characters</div>
+          <div class="dv" id="dChars">—</div>
+          <div class="ds">Including spaces</div>
+        </div>
+        <div class="detail-cell">
+          <div class="dk">Net score</div>
+          <div class="dv" id="dNet">—</div>
+          <div class="ds">Fake − real points</div>
+        </div>
+        <div class="detail-cell">
+          <div class="dk">Exclamations</div>
+          <div class="dv" id="dBang">—</div>
+          <div class="ds">! in your text</div>
+        </div>
+      </div>
+
+      <div class="score-block">
+        <h4>Score breakdown (internal points)</h4>
+        <div class="score-rows">
+          <div class="score-row fake">
+            <span class="lbl">FAKE</span>
+            <div class="score-track"><div class="score-fill fake" id="scoreFakeBar"></div></div>
+            <span class="score-val" id="scoreFakeVal">0</span>
+          </div>
+          <div class="score-row real">
+            <span class="lbl">REAL</span>
+            <div class="score-track"><div class="score-fill real" id="scoreRealBar"></div></div>
+            <span class="score-val" id="scoreRealVal">0</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="meter-block">
+        <div class="meter-head">
+          <span class="meter-label">Model confidence</span>
+          <span id="meterPct"></span>
+        </div>
+        <div class="meter-track">
+          <div class="meter-fill" id="meterFill"></div>
+        </div>
+        <div class="meter-scale">
+          <span>50 uncertain</span>
+          <span>99 very sure</span>
+        </div>
+      </div>
+
+      <div class="risk-explainer">
+        <p id="riskExplainer"></p>
+      </div>
+
+      <div class="block-pad">
+        <div class="small-cap">Summary reasoning</div>
+        <p class="reasoning" id="resultReasoning"></p>
+      </div>
+      <div class="block-pad">
+        <div class="small-cap" style="margin-bottom:14px">Detected signals</div>
+        <div class="signal-list" id="signalList"></div>
+      </div>
+      <div class="analyzed-wrap">
+        <div class="small-cap" style="margin-bottom:8px">Source text</div>
+        <div class="analyzed-text" id="analyzedQuote"></div>
+      </div>
+    </div>
+
+    <div id="historySection">
+      <div class="section-head">
+        <span class="section-label" id="historyTitle">Analysis history</span>
+        <span class="section-hint">Click a row to reload</span>
+      </div>
+      <div id="historyList"></div>
+    </div>
+
+    <footer class="foot">
+      Local heuristic engine · no API keys · no telemetry · built for learning &amp; demos
+    </footer>
+  </div>
+
+  <script>
+(function () {
+  "use strict";
+
+  var DEMO_HEADLINES = [
+    "NASA confirms water ice discovered on the lunar south pole surface",
+    "Scientists found that drinking bleach cures cancer in 72 hours",
+    "Federal Reserve raises interest rates citing persistent inflation",
+    "Bill Gates microchips hidden inside every COVID-19 vaccine dose",
+    "Oxford researchers identify gene variant linked to Alzheimer's resilience",
+    "5G towers are the real cause of COVID-19, banned study confirms",
+    "UN Security Council passes resolution for humanitarian aid access",
+    "Chemtrails contain mind-control chemicals, whistleblower pilot reveals",
+  ];
+
+  function wordCount(s) {
+    var t = s.trim();
+    if (!t) return 0;
+    return t.split(/\s+/).length;
+  }
+
+  function analyzeLocally(headline) {
+    var text = headline.trim();
+    var lower = text.toLowerCase();
+    var signals = [];
+    var fakePoints = 0;
+    var realPoints = 0;
+
+    var exclaim = (text.match(/!/g) || []).length;
+    if (exclaim >= 2) {
+      fakePoints += 2;
+      signals.push("Multiple exclamation marks suggest sensational tone");
+    }
+
+    var letters = text.replace(/[^a-zA-Z]/g, "");
+    var upper = (text.match(/[A-Z]/g) || []).length;
+    if (letters.length > 8 && upper / letters.length > 0.35) {
+      fakePoints += 2;
+      signals.push("High ratio of capital letters (shouting / clickbait)");
+    }
+
+    var fakePhrases = [
+      ["bleach", "cancer"],
+      ["microchip", "vaccine"],
+      ["5g", "covid"],
+      ["chemtrail", "mind"],
+      ["banned study"],
+      ["whistleblower", "reveals"],
+      ["drinking bleach"],
+      ["cures cancer"],
+    ];
+    for (var fp = 0; fp < fakePhrases.length; fp++) {
+      var words = fakePhrases[fp];
+      var all = true;
+      for (var w = 0; w < words.length; w++) {
+        if (lower.indexOf(words[w]) === -1) {
+          all = false;
+          break;
+        }
+      }
+      if (all) {
+        fakePoints += 3;
+        signals.push('Conspiracy or harmful-health pattern: "' + words.join(" + ") + '"');
+      }
+    }
+
+    var institutionHints = [
+      { re: /\bnasa\b/i, msg: "Named scientific/government institution (NASA)" },
+      { re: /\bfederal reserve\b/i, msg: "Specific economic institution cited" },
+      { re: /\boxford\b|\bun security council\b/i, msg: "Named research or diplomatic body" },
+      { re: /\bresolution\b.*\bhumanitarian\b/i, msg: "Policy language with concrete topic" },
+      { re: /\binterest rates\b|\binflation\b/i, msg: "Measured economic reporting language" },
+      { re: /\bgene variant\b|\balzheimer/i, msg: "Scientific terminology with specific claim" },
+      { re: /\bwater ice\b.*\blunar\b|\bmoon\b/i, msg: "Specific verifiable discovery framing" },
+    ];
+    for (var ih = 0; ih < institutionHints.length; ih++) {
+      var hint = institutionHints[ih];
+      if (hint.re.test(text)) {
+        realPoints += 2;
+        if (signals.length < 5 && signals.indexOf(hint.msg) === -1) {
+          signals.unshift(hint.msg);
+        }
+      }
+    }
+
+    if (/\b(study confirms|doctors hate|one weird trick|they don't want you)\b/i.test(lower)) {
+      fakePoints += 2;
+      signals.push("Clickbait or tabloid-style phrasing");
+    }
+
+    if (signals.length < 3) {
+      if (fakePoints > realPoints) {
+        signals.push("Overall tone leans sensational or unverifiable");
+      } else {
+        signals.push("Language resembles mainstream factual reporting");
+      }
+    }
+    while (signals.length < 3) {
+      signals.push(
+        fakePoints > realPoints
+          ? "Limited verifiable specifics in headline"
+          : "Structured, institution-style headline"
+      );
+    }
+
+    var net = fakePoints - realPoints;
+    var label = net >= 1 ? "FAKE" : "REAL";
+    var confidence = Math.min(
+      99,
+      Math.max(55, 55 + Math.abs(net) * 8 + Math.min(12, signals.length * 2))
+    );
+    var risk =
+      label === "FAKE" && /bleach|vaccine|5g|chemtrail|cure/i.test(text)
+        ? "HIGH"
+        : label === "FAKE"
+          ? "MEDIUM"
+          : "LOW";
+
+    var reasoning =
+      label === "FAKE"
+        ? "Heuristic scan weighted sensational patterns, weak sourcing cues, and harmful-misinformation keywords over institutional signals."
+        : "Heuristic scan found credible-institution cues, measured wording, and fewer sensational markers typical of fabricated headlines.";
+
+    var riskExpl =
+      risk === "HIGH"
+        ? "HIGH risk: if this headline were false, it could encourage dangerous health choices or targeted harassment. Verify with medical authorities or mainstream investigative reporting before sharing."
+        : risk === "MEDIUM"
+          ? "MEDIUM risk: misleading claims here could still spread confusion or erode trust. Cross-check dates, names, and direct quotes in the original publication."
+          : "LOW risk: verdict leans credible or harmless if wrong — still verify anything that affects decisions you care about.";
+
+    var band =
+      confidence >= 85
+        ? "High confidence band"
+        : confidence >= 70
+          ? "Moderate confidence band"
+          : "Softer confidence — text is ambiguous";
+
+    return {
+      label: label,
+      confidence: Math.round(confidence),
+      reasoning: reasoning,
+      signals: signals.slice(0, 5),
+      risk_level: risk,
+      fakePoints: fakePoints,
+      realPoints: realPoints,
+      net: net,
+      exclaim: exclaim,
+      riskExplainer: riskExpl,
+      confidenceBand: band,
+    };
+  }
+
+  function escapeHtml(s) {
+    var d = document.createElement("div");
+    d.textContent = s;
+    return d.innerHTML;
+  }
+
+  function riskColor(r) {
+    return r === "HIGH" ? "#ff5c6c" : r === "MEDIUM" ? "#ffc93d" : "#2ef4c3";
+  }
+
+  function labelGrad(label) {
+    return label === "REAL"
+      ? "linear-gradient(135deg, #7efce8 0%, #2ef4c3 40%, #00a67a 100%)"
+      : "linear-gradient(135deg, #ff8a9a 0%, #ff5c6c 45%, #e04050 100%)";
+  }
+
+  function formatTime(d) {
+    try {
+      return d.toLocaleString(undefined, {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      });
+    } catch (e) {
+      return String(d);
+    }
+  }
+
+  var headlineEl = document.getElementById("headline");
+  var btnAnalyze = document.getElementById("btnAnalyze");
+  var charCount = document.getElementById("charCount");
+  var wordCountFoot = document.getElementById("wordCountFoot");
+  var scanBar = document.getElementById("scanBar");
+  var errorBox = document.getElementById("errorBox");
+  var resultCard = document.getElementById("resultCard");
+  var historySection = document.getElementById("historySection");
+  var historyList = document.getElementById("historyList");
+  var historyTitle = document.getElementById("historyTitle");
+  var demoWrap = document.getElementById("demoWrap");
+  var statScans = document.getElementById("statScans");
+  var engineLive = document.getElementById("engineLive");
+
+  var history = [];
+  var loading = false;
+  var scanInterval = null;
+  var sessionScans = 0;
+
+  function updateCharCount() {
+    var v = headlineEl.value;
+    var n = v.length;
+    charCount.textContent = String(n);
+    wordCountFoot.textContent = String(wordCount(v));
+    var empty = !v.trim();
+    btnAnalyze.disabled = loading || empty;
+    btnAnalyze.classList.toggle("dim", empty && !loading);
+  }
+
+  function setLoading(on) {
+    loading = on;
+    headlineEl.disabled = on;
+    var demos = demoWrap.querySelectorAll(".demo-btn");
+    for (var i = 0; i < demos.length; i++) demos[i].disabled = on;
+    engineLive.classList.toggle("off", on);
+    engineLive.title = on ? "Scanning…" : "Ready";
+    updateCharCount();
+  }
+
+  function startScanAnimation() {
+    scanBar.classList.add("active");
+    scanBar.style.width = "0%";
+    var p = 0;
+    clearInterval(scanInterval);
+    scanInterval = setInterval(function () {
+      p += Math.random() * 12;
+      if (p > 92) p = 92;
+      scanBar.style.width = Math.round(p) + "%";
+    }, 150);
+  }
+
+  function stopScanAnimation() {
+    clearInterval(scanInterval);
+    scanBar.style.width = "100%";
+    setTimeout(function () {
+      scanBar.classList.remove("active");
+      scanBar.style.width = "0%";
+    }, 600);
+  }
+
+  function renderResult(parsed, headline, analyzedAt) {
+    var isReal = parsed.label === "REAL";
+    resultCard.className = isReal ? "real show" : "fake show";
+    document.getElementById("resultEmoji").textContent = isReal ? "✅" : "🚨";
+    var vl = document.getElementById("resultLabel");
+    vl.textContent = parsed.label;
+    vl.style.background = labelGrad(parsed.label);
+    document.getElementById("resultMeta").textContent =
+      "Confidence " + parsed.confidence + "% · verdict " + parsed.label;
+    document.getElementById("resultTime").textContent =
+      "Analyzed · " + formatTime(analyzedAt);
+    var rc = riskColor(parsed.risk_level);
+    var pill = document.getElementById("riskPill");
+    pill.textContent = "RISK · " + parsed.risk_level;
+    pill.style.borderColor = rc + "66";
+    pill.style.color = rc;
+    pill.style.background =
+      rc === "#2ef4c3"
+        ? "rgba(46,244,195,0.12)"
+        : rc === "#ffc93d"
+          ? "rgba(255,201,61,0.12)"
+          : "rgba(255,92,108,0.12)";
+
+    document.getElementById("confidenceBand").textContent = parsed.confidenceBand;
+
+    var wc = wordCount(headline);
+    document.getElementById("dWords").textContent = String(wc);
+    document.getElementById("dChars").textContent = String(headline.length);
+    var netStr = parsed.net > 0 ? "+" + parsed.net : String(parsed.net);
+    document.getElementById("dNet").textContent = netStr;
+    document.getElementById("dBang").textContent = String(parsed.exclaim);
+
+    var maxScore = Math.max(1, parsed.fakePoints + parsed.realPoints);
+    var fakePct = Math.round((parsed.fakePoints / maxScore) * 100);
+    var realPct = Math.round((parsed.realPoints / maxScore) * 100);
+    document.getElementById("scoreFakeVal").textContent = String(parsed.fakePoints);
+    document.getElementById("scoreRealVal").textContent = String(parsed.realPoints);
+    var sf = document.getElementById("scoreFakeBar");
+    var sr = document.getElementById("scoreRealBar");
+    sf.style.width = "0%";
+    sr.style.width = "0%";
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        sf.style.width = fakePct + "%";
+        sr.style.width = realPct + "%";
+      });
+    });
+
+    document.getElementById("riskExplainer").textContent = parsed.riskExplainer;
+
+    var mp = document.getElementById("meterPct");
+    mp.textContent = parsed.confidence + "%";
+    mp.style.color = isReal ? "#5efce8" : "#ff9aaa";
+    var fill = document.getElementById("meterFill");
+    fill.style.width = "0%";
+    fill.style.background = labelGrad(parsed.label);
+    fill.style.boxShadow = isReal ? "0 0 20px rgba(46,244,195,0.5)" : "0 0 20px rgba(255,92,108,0.42)";
+    requestAnimationFrame(function () {
+      requestAnimationFrame(function () {
+        fill.style.width = parsed.confidence + "%";
+      });
+    });
+
+    document.getElementById("resultReasoning").textContent = parsed.reasoning;
+    var sl = document.getElementById("signalList");
+    sl.innerHTML = "";
+    var sigs = parsed.signals || [];
+    for (var si = 0; si < sigs.length; si++) {
+      var row = document.createElement("div");
+      row.className = "signal-row";
+      row.innerHTML =
+        '<span class="signal-idx">' +
+        String(si + 1).padStart(2, "0") +
+        '</span><span class="signal-txt">' +
+        escapeHtml(sigs[si]) +
+        "</span>";
+      sl.appendChild(row);
+    }
+    document.getElementById("analyzedQuote").innerHTML =
+      '"' + escapeHtml(headline) + '"';
+  }
+
+  function renderHistory() {
+    if (history.length <= 1) {
+      historySection.classList.remove("show");
+      return;
+    }
+    historySection.classList.add("show");
+    historyTitle.textContent = "Analysis history (" + history.length + ")";
+    historyList.innerHTML = "";
+    for (var i = 1; i < history.length; i++) {
+      var h = history[i];
+      (function (item) {
+        var row = document.createElement("div");
+        row.className = "hist-row";
+        row.innerHTML =
+          '<span style="font-size:1.1rem">' +
+          (item.label === "REAL" ? "✅" : "🚨") +
+          '</span><span class="hist-label">' +
+          escapeHtml(item.label) +
+          '</span><span class="hist-pct">' +
+          item.confidence +
+          '%</span><span class="hist-snippet">' +
+          escapeHtml(item.text) +
+          '</span><span class="hist-time">' +
+          escapeHtml(formatTime(item.at)) +
+          "</span>";
+        var hl = row.querySelector(".hist-label");
+        hl.style.background = labelGrad(item.label);
+        row.addEventListener("click", function () {
+          headlineEl.value = item.text;
+          updateCharCount();
+          renderResult(item, item.text, item.at);
+        });
+        historyList.appendChild(row);
+      })(h);
+    }
+  }
+
+  function analyze(overrideText) {
+    var headline = (overrideText != null ? overrideText : headlineEl.value).trim();
+    if (!headline || loading) return;
+
+    errorBox.classList.remove("show");
+    resultCard.classList.remove("show");
+    setLoading(true);
+    btnAnalyze.textContent = "Scanning…";
+
+    var progressTicker = setInterval(function () {
+      var m = scanBar.style.width.match(/(\d+)/);
+      btnAnalyze.textContent = "Scanning " + (m ? m[1] : "0") + "%";
+    }, 160);
+
+    startScanAnimation();
+
+    setTimeout(function () {
+      try {
+        clearInterval(progressTicker);
+        var parsed = analyzeLocally(headline);
+        var at = new Date();
+        stopScanAnimation();
+        sessionScans++;
+        statScans.textContent = String(sessionScans);
+        history.unshift({
+          label: parsed.label,
+          confidence: parsed.confidence,
+          reasoning: parsed.reasoning,
+          signals: parsed.signals.slice(),
+          risk_level: parsed.risk_level,
+          fakePoints: parsed.fakePoints,
+          realPoints: parsed.realPoints,
+          net: parsed.net,
+          exclaim: parsed.exclaim,
+          riskExplainer: parsed.riskExplainer,
+          confidenceBand: parsed.confidenceBand,
+          text: headline,
+          at: at,
+        });
+        if (history.length > 10) history.length = 10;
+        renderResult(parsed, headline, at);
+        renderHistory();
+      } catch (e) {
+        stopScanAnimation();
+        errorBox.textContent = "Something went wrong. Try again.";
+        errorBox.classList.add("show");
+      } finally {
+        setLoading(false);
+        btnAnalyze.textContent = "Analyze";
+      }
+    }, 420 + Math.random() * 380);
+  }
+
+  headlineEl.addEventListener("input", updateCharCount);
+  headlineEl.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      analyze();
+    }
+  });
+  btnAnalyze.addEventListener("click", function () {
+    analyze();
+  });
+
+  for (var d = 0; d < DEMO_HEADLINES.length; d++) {
+    (function (h) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "demo-btn";
+      b.textContent = h;
+      b.addEventListener("click", function () {
+        headlineEl.value = h;
+        updateCharCount();
+        setTimeout(function () {
+          analyze(h);
+        }, 50);
+      });
+      demoWrap.appendChild(b);
+    })(DEMO_HEADLINES[d]);
+  }
+
+  headlineEl.focus();
+  updateCharCount();
+})();
+  </script>
+</body>
+</html>
